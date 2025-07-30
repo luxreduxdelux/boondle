@@ -50,23 +50,143 @@
 
 use crate::{
     app::App,
-    project::{CompileStatus, Project},
+    exporter::export::{EventHandler, Export},
+    project::{CompileStatus, Meta},
 };
 
 //================================================================
 
-use eframe::egui;
+use eframe::egui::{self, RichText};
 use serde::{Deserialize, Serialize};
 
 //================================================================
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct AppImage {
+    pub binary: Option<String>,
     pub script: Option<String>,
-    pub desktop: crate::exporter::debian::Desktop,
+    //pub desktop: crate::exporter::debian::Desktop,
     pub export: bool,
     #[serde(skip)]
     pub status: CompileStatus,
+    #[serde(skip)]
+    pub handler: EventHandler,
+}
+
+#[typetag::serde]
+impl Export for AppImage {
+    fn draw_setup(&mut self, ui: &mut egui::Ui) -> bool {
+        ui.collapsing("AppImage Package (.AppImage)", |ui| {
+            ui.checkbox(&mut self.export, "Export Package");
+
+            ui.add_enabled_ui(self.export, |ui| {
+                App::pick_file(ui, "Binary", &mut self.binary);
+                App::pick_file(ui, "After-Installation Script", &mut self.script);
+                //self.desktop.draw(ui);
+            });
+
+            ui.button("Remove").clicked()
+        });
+
+        false
+    }
+
+    fn draw_modal(&mut self, ui: &mut egui::Ui) {
+        if self.export {
+            ui.horizontal(|ui| {
+                ui.label(".AppImage package status: ");
+                ui.label(RichText::new(format!("{}", self.status)).color(self.status.color()));
+
+                if self.status == CompileStatus::InProgress {
+                    ui.spinner();
+                }
+            });
+        }
+    }
+
+    fn get_export(&self) -> bool {
+        self.export
+    }
+
+    fn get_status(&mut self) -> &mut CompileStatus {
+        &mut self.status
+    }
+
+    fn get_handler(&mut self) -> &mut EventHandler {
+        &mut self.handler
+    }
+
+    fn compile(&mut self, meta: Meta) -> anyhow::Result<()> {
+        if !self.export {
+            return Ok(());
+        }
+
+        self.status = CompileStatus::InProgress;
+
+        if meta.name.is_empty() {
+            return Err(anyhow::Error::msg(
+                "AppImage: Project name cannot be empty.",
+            ));
+        }
+
+        let work = format!("test/boondle_app_image/{}.AppDir", meta.name);
+        let usr = format!("{work}/usr");
+
+        if std::fs::exists("test/boondle_app_image")? {
+            std::fs::remove_dir_all("test/boondle_app_image")?;
+        }
+
+        // create work folder.
+        std::fs::create_dir_all(&work)?;
+
+        //================================================================
+
+        // copy after-install script.
+        if let Some(path) = &self.script {
+            std::fs::copy(path, format!("{work}/AppRun"))?;
+        } else {
+            // write AppRun file.
+            std::fs::write(format!("{work}/AppRun"), Self::file_app_run(&meta))?;
+        }
+
+        std::process::Command::new("chmod")
+            .arg("a+x")
+            .arg(format!("{work}/AppRun"))
+            .output()?;
+
+        // write .desktop file.
+        std::fs::write(
+            format!("{work}/{}.desktop", meta.name),
+            meta.create_desktop_file(true),
+        )?;
+
+        //================================================================
+
+        // create binary folder.
+        std::fs::create_dir_all(format!("{usr}/bin"))?;
+
+        // copy binary, if present.
+        if let Some(path) = &self.binary {
+            std::fs::copy(path, format!("{usr}/bin/{}", meta.name))?;
+        }
+
+        // copy icon file, if present.
+        if let Some(path) = &meta.icon {
+            // appimagetool won't work if we don't have an extension at the end...
+            std::fs::copy(path, format!("{work}/{}-icon.png", meta.name))?;
+        }
+
+        //================================================================
+
+        let path = format!("test/{}_{}.AppImage", meta.name, meta.version);
+
+        let mut command = std::process::Command::new("appimagetool");
+        command.arg(work).arg(path);
+
+        self.execute(command);
+
+        Ok(())
+    }
 }
 
 impl AppImage {
@@ -80,105 +200,9 @@ export XDG_DATA_DIRS="$APPDIR/usr/share/:/usr/share/:$XDG_DATA_DIRS"
 "$APPDIR"/usr/bin/{name}
 "#;
 
-    pub fn draw(&mut self, ui: &mut egui::Ui) {
-        ui.collapsing("AppImage Package (.AppImage)", |ui| {
-            App::pick_file(ui, "After-Installation Script", &mut self.script);
-
-            self.desktop.draw(ui);
-
-            ui.checkbox(&mut self.export, "Export Package");
-        });
-    }
-
-    pub fn export(project: &mut Project) -> anyhow::Result<()> {
-        if !project.app_image.export {
-            return Ok(());
-        }
-
-        project.app_image.status = CompileStatus::InProgress;
-
-        if project.name.is_empty() {
-            return Err(anyhow::Error::msg(
-                "AppImage: Project name cannot be empty.",
-            ));
-        }
-
-        let work = format!("test/boondle_app_image/{}.AppDir", project.name);
-        let usr = format!("{work}/usr");
-
-        if std::fs::exists("test/boondle_app_image")? {
-            std::fs::remove_dir_all("test/boondle_app_image")?;
-        }
-
-        // create work folder.
-        std::fs::create_dir_all(&work)?;
-
-        //================================================================
-
-        // copy after-install script.
-        if let Some(path) = &project.app_image.script {
-            std::fs::copy(path, format!("{work}/AppRun"))?;
-        } else {
-            // write AppRun file.
-            std::fs::write(format!("{work}/AppRun"), Self::file_app_run(project))?;
-        }
-
-        std::process::Command::new("chmod")
-            .arg("a+x")
-            .arg(format!("{work}/AppRun"))
-            .output()?;
-
-        // write .desktop file.
-        std::fs::write(
-            format!("{work}/{}.desktop", project.name),
-            project.app_image.desktop.create_file(project, true),
-        )?;
-
-        //================================================================
-
-        // create binary folder.
-        std::fs::create_dir_all(format!("{usr}/bin"))?;
-
-        // copy binary, if present.
-        if let Some(path) = &project.path_binary {
-            std::fs::copy(path, format!("{usr}/bin/{}", project.name))?;
-        }
-
-        // copy icon file, if present.
-        if let Some(path) = &project.icon {
-            // appimagetool won't work if we don't have an extension at the end...
-            std::fs::copy(path, format!("{work}/{}-icon.png", project.name))?;
-        }
-
-        //================================================================
-
-        let path = format!("test/{}_{}.AppImage", project.name, project.version);
-        let tx = project.event_tx.clone().unwrap();
-
-        std::thread::spawn(move || {
-            let out = std::process::Command::new("appimagetool")
-                .arg(work)
-                .arg(path)
-                .output()
-                .unwrap();
-
-            let event = if out.clone().exit_ok().is_err() {
-                crate::project::Event::AppImage(Err(anyhow::Error::msg(
-                    String::from_utf8(out.stderr).unwrap(),
-                )))
-            } else {
-                crate::project::Event::AppImage(Ok(()))
-            };
-
-            tx.send(event).unwrap();
-        });
-
-        Ok(())
-    }
-
-    fn file_app_run(project: &Project) -> String {
+    fn file_app_run(meta: &Meta) -> String {
         let mut file = Self::FILE_APP_RUN.to_string();
-        file = file.replace("{name}", &project.name);
+        file = file.replace("{name}", &meta.name);
 
         file
     }

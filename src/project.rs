@@ -50,28 +50,35 @@
 
 use crate::{
     app::App,
-    exporter::{app_image::AppImage, debian::Debian},
+    exporter::{app_image::AppImage, debian::Debian, export::Export},
 };
-use std::{fmt::Display, sync::mpsc::channel};
+use std::fmt::Display;
 
 //================================================================
 
-use eframe::egui;
+use eframe::egui::{self, Color32};
 use egui_modal::Modal;
 use serde::{Deserialize, Serialize};
-use std::{
-    path::PathBuf,
-    sync::mpsc::{Receiver, Sender},
-};
+use std::path::PathBuf;
 
 //================================================================
 
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq)]
 pub enum CompileStatus {
     #[default]
     InProgress,
     Success,
     Failure(String),
+}
+
+impl CompileStatus {
+    pub fn color(&self) -> Color32 {
+        match self {
+            CompileStatus::InProgress => Color32::LIGHT_BLUE,
+            CompileStatus::Success => Color32::LIGHT_GREEN,
+            CompileStatus::Failure(_) => Color32::LIGHT_RED,
+        }
+    }
 }
 
 impl Display for CompileStatus {
@@ -84,53 +91,71 @@ impl Display for CompileStatus {
     }
 }
 
-pub enum Event {
-    Debian(anyhow::Result<()>),
-    AppImage(anyhow::Result<()>),
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct Project {
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub struct Meta {
     pub path: PathBuf,
     pub name: String,
     pub icon: Option<String>,
     pub info: String,
     pub from: String,
     pub version: String,
-    pub path_binary: Option<String>,
-    pub debian: Debian,
-    pub app_image: AppImage,
-    #[serde(skip)]
-    pub event_tx: Option<Sender<Event>>,
-    #[serde(skip)]
-    pub event_rx: Option<Receiver<Event>>,
+    pub name_generic: String,
+    pub comment: String,
+    pub category: String,
+    pub key_word: String,
+    pub command_line: bool,
 }
 
-impl Default for Project {
-    fn default() -> Self {
-        let (event_tx, event_rx) = channel();
+impl Meta {
+    const FILE_DESKTOP: &str = r#"[Desktop Entry]
+Name={name}
+{icon}
+Exec=/usr/bin/{name}
+Type=Application
+Categories=Utility;
+"#;
 
-        Self {
-            path: PathBuf::default(),
-            name: String::default(),
-            icon: None,
-            info: String::default(),
-            from: String::default(),
-            version: String::default(),
-            path_binary: None,
-            debian: Debian::default(),
-            app_image: AppImage::default(),
-            event_tx: Some(event_tx),
-            event_rx: Some(event_rx),
-        }
+    pub fn create_desktop_file(&self, icon_root: bool) -> String {
+        let icon = if icon_root {
+            format!("Icon=/{}-icon", &self.name)
+        } else {
+            format!("Icon=/usr/share/icons/{}-icon", &self.name)
+        };
+
+        let mut file = Self::FILE_DESKTOP.to_string();
+        file = file.replace("{name}", &self.name);
+        file = file.replace("{icon}", &icon);
+        //file = file.replace("{name_generic}", &self.name_generic);
+        //file = file.replace(
+        //    "{command_line}",
+        //    if self.command_line { "true" } else { "false" },
+        //);
+        //file = file.replace("{comment}", &self.comment);
+        //file = file.replace("{category}", &self.category);
+        //file = file.replace("{key_word}", &self.key_word);
+
+        file
     }
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct Project {
+    pub meta: Meta,
+    pub exporter: Vec<Box<dyn Export>>,
 }
 
 impl Project {
     pub fn new() -> anyhow::Result<Option<Self>> {
-        if let Some(path) = rfd::FileDialog::new().save_file() {
+        if let Some(mut path) = rfd::FileDialog::new().save_file() {
+            path.set_extension("json");
+
+            println!("{path:?}");
+
             let result = Self {
-                path: path.clone(),
+                meta: Meta {
+                    path: path.clone(),
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -146,7 +171,7 @@ impl Project {
         egui::TopBottomPanel::top("layout").show(context, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Save").clicked() {
-                    let _ = App::error(self.save(self.path.clone()), "Load Error");
+                    let _ = App::error(self.save(self.meta.path.clone()), "Save Error");
                 };
 
                 if ui.button("Load").clicked()
@@ -164,49 +189,50 @@ impl Project {
                 ui.separator();
 
                 ui.label("Name");
-                ui.text_edit_singleline(&mut self.name);
+                ui.text_edit_singleline(&mut self.meta.name);
 
-                App::pick_file(ui, "Icon", &mut self.icon);
+                App::pick_file(ui, "Icon", &mut self.meta.icon);
 
                 ui.label("Info");
-                ui.text_edit_singleline(&mut self.info);
+                ui.text_edit_singleline(&mut self.meta.info);
 
                 ui.label("From");
-                ui.text_edit_singleline(&mut self.from);
+                ui.text_edit_singleline(&mut self.meta.from);
 
                 ui.label("Version");
-                ui.text_edit_singleline(&mut self.version);
+                ui.text_edit_singleline(&mut self.meta.version);
 
-                App::pick_file(ui, "Linux Binary", &mut self.path_binary);
+                //App::pick_file(ui, "Linux Binary", &mut self.path_binary);
 
                 //================================================================
 
-                let event = self.event_rx.as_ref().unwrap();
-
-                if let Ok(event) = event.try_recv() {
-                    match event {
-                        Event::Debian(result) => {
-                            if let Err(error) = result {
-                                self.debian.status = CompileStatus::Failure(error.to_string());
-                            } else {
-                                self.debian.status = CompileStatus::Success;
-                            }
-                        }
-                        Event::AppImage(result) => {
-                            if let Err(error) = result {
-                                self.app_image.status = CompileStatus::Failure(error.to_string());
-                            } else {
-                                self.app_image.status = CompileStatus::Success;
-                            }
-                        }
-                    }
+                for exporter in &mut self.exporter {
+                    exporter.poll_compile();
                 }
 
                 ui.heading("Compilation");
                 ui.separator();
 
-                self.debian.draw(ui);
-                self.app_image.draw(ui);
+                ui.horizontal(|ui| {
+                    if ui.button("+ Debian").clicked() {
+                        self.exporter.push(Box::new(Debian::default()));
+                    };
+
+                    if ui.button("+ AppImage").clicked() {
+                        self.exporter.push(Box::new(AppImage::default()));
+                    };
+                });
+
+                ui.separator();
+
+                for exporter in &mut self.exporter {
+                    exporter.draw_setup(ui);
+                }
+
+                let can_export = self
+                    .exporter
+                    .iter_mut()
+                    .any(|exporter| exporter.get_export());
 
                 let modal = Modal::new(context, "my_modal");
 
@@ -214,47 +240,51 @@ impl Project {
                     modal.title(ui, "Export State");
 
                     modal.frame(ui, |ui| {
-                        ui.label(format!(".deb package: {}", self.debian.status));
-                        ui.label(format!(".app package: {}", self.app_image.status));
+                        for exporter in &mut self.exporter {
+                            exporter.draw_modal(ui);
+                        }
                     });
 
-                    modal.buttons(ui, |ui| {
-                        if modal.button(ui, "Close").clicked() {};
-                    });
+                    let complete = self
+                        .exporter
+                        .iter_mut()
+                        .all(|exporter| exporter.success_or_failure());
+
+                    if complete {
+                        modal.buttons(ui, |ui| {
+                            if modal.button(ui, "Close").clicked() {};
+                        });
+                    }
                 });
 
-                if ui.button("Export").clicked() {
-                    modal.open();
-                    let _ = self.export();
+                if ui
+                    .add_enabled(
+                        !self.exporter.is_empty() && can_export,
+                        egui::Button::new("Export"),
+                    )
+                    .clicked()
+                {
+                    if self.compile().is_ok() {
+                        modal.open();
+                    }
                 }
             });
         });
     }
 
-    fn export(&mut self) -> anyhow::Result<()> {
-        App::error(Debian::export(self), "Debian Error")?;
-        App::error(AppImage::export(self), "AppImage Error")?;
+    fn compile(&mut self) -> anyhow::Result<()> {
+        for exporter in &mut self.exporter {
+            App::error(exporter.compile(self.meta.clone()), "Compile Error")?;
+        }
 
         Ok(())
     }
 
     fn save(&self, path: PathBuf) -> anyhow::Result<()> {
-        let data: Vec<u8> = postcard::to_allocvec(self)?;
-        std::fs::write(path, data)?;
-
-        Ok(())
+        Ok(std::fs::write(path, serde_json::to_string_pretty(self)?)?)
     }
 
     pub fn load(path: PathBuf) -> anyhow::Result<Self> {
-        let data = std::fs::read(path)?;
-        let data = postcard::from_bytes(&data)?;
-
-        let (event_tx, event_rx) = channel();
-
-        Ok(Self {
-            event_tx: Some(event_tx),
-            event_rx: Some(event_rx),
-            ..data
-        })
+        Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
     }
 }

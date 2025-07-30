@@ -48,12 +48,77 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use crate::project::{CompileStatus, Project};
-use eframe::egui;
+use crate::project::{CompileStatus, Meta};
 
+//================================================================
+
+use eframe::egui;
+use std::{
+    process::Command,
+    sync::mpsc::{Receiver, Sender, channel},
+};
+
+//================================================================
+
+pub type EventTx = Sender<anyhow::Result<()>>;
+pub type EventRx = Receiver<anyhow::Result<()>>;
+pub type EventHandler = Option<(EventTx, EventRx)>;
+
+#[typetag::serde(tag = "type")]
 pub trait Export {
-    fn draw_setup(&mut self, ui: &mut egui::Ui);
+    fn draw_setup(&mut self, ui: &mut egui::Ui) -> bool;
     fn draw_modal(&mut self, ui: &mut egui::Ui);
-    fn export(project: &mut Project);
-    fn status(&self) -> CompileStatus;
+    fn get_export(&self) -> bool;
+    fn get_status(&mut self) -> &mut CompileStatus;
+    fn get_handler(&mut self) -> &mut EventHandler;
+    fn compile(&mut self, meta: Meta) -> anyhow::Result<()>;
+
+    //================================================================
+
+    /// set the current compile status.
+    fn set_status(&mut self, status: CompileStatus) {
+        *self.get_status() = status;
+    }
+
+    /// execute compile command.
+    fn execute(&mut self, mut command: Command) {
+        if self.get_handler().is_none() {
+            let (tx, rx) = channel();
+
+            *self.get_handler() = Some((tx, rx))
+        }
+
+        let (tx, _) = self.get_handler().as_ref().unwrap();
+
+        let tx = tx.clone();
+
+        std::thread::spawn(move || {
+            let out = command.output().unwrap();
+
+            let event = if out.clone().exit_ok().is_err() {
+                Err(anyhow::Error::msg(String::from_utf8(out.stderr).unwrap()))
+            } else {
+                Ok(())
+            };
+
+            tx.send(event).unwrap();
+        });
+    }
+
+    /// poll the compile state.
+    fn poll_compile(&mut self) {
+        if let Some((_, rx)) = self.get_handler()
+            && let Ok(event) = rx.try_recv()
+        {
+            match event {
+                Ok(_) => self.set_status(CompileStatus::Success),
+                Err(error) => self.set_status(CompileStatus::Failure(error.to_string())),
+            }
+        }
+    }
+
+    /// check if the exporter is no longer in progress.
+    fn success_or_failure(&mut self) -> bool {
+        !self.get_export() || *self.get_status() != CompileStatus::InProgress
+    }
 }

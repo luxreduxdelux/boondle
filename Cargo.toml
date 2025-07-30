@@ -9,4 +9,5 @@ eframe     = { version = "0.32.0" }
 egui-modal = { git = "https://github.com/LinoBigatti/egui-modal", branch = "main" }
 rfd        = { version = "0.15.4" }
 serde      = { version = "1.0",    features = ["derive"] }
-postcard   = { version = "1.0.0",  features = ["alloc"]  }
+serde_json = { version = "1.0" }
+typetag = "0.2.20"

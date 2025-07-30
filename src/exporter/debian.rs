@@ -50,71 +50,95 @@
 
 use crate::{
     app::App,
-    project::{CompileStatus, Project},
+    exporter::export::{EventHandler, Export},
+    project::{CompileStatus, Meta},
 };
 
 //================================================================
 
-use eframe::egui;
+use eframe::egui::{self, RichText};
 use serde::{Deserialize, Serialize};
 
 //================================================================
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Debian {
+    pub binary: Option<String>,
     pub script_prior: Option<String>,
     pub script_after: Option<String>,
-    pub desktop: Desktop,
     pub export: bool,
+    pub x86_64: bool,
+    pub architecture: String,
     #[serde(skip)]
     pub status: CompileStatus,
+    #[serde(skip)]
+    pub handler: EventHandler,
 }
 
-impl Debian {
-    const FILE_CONTROL: &'static str = r#"Package: {name}
-Version: {version}
-Architecture: all
-Essential: no
-Priority: optional
-Depends:
-Maintainer: {from}
-Description: {info}
-"#;
-
-    pub fn draw(&mut self, ui: &mut egui::Ui) {
+#[typetag::serde]
+impl Export for Debian {
+    fn draw_setup(&mut self, ui: &mut egui::Ui) -> bool {
         ui.collapsing("Debian Package (.deb)", |ui| {
-            App::pick_file(ui, "Prior-Installation Script", &mut self.script_prior);
-            App::pick_file(ui, "After-Installation Script", &mut self.script_after);
-
-            self.desktop.draw(ui);
-
             ui.checkbox(&mut self.export, "Export Package");
+
+            ui.add_enabled_ui(self.export, |ui| {
+                App::pick_file(ui, "Binary", &mut self.binary);
+                App::pick_file(ui, "Prior-Installation Script", &mut self.script_prior);
+                App::pick_file(ui, "After-Installation Script", &mut self.script_after);
+                ui.checkbox(&mut self.x86_64, "64-Bit Binary")
+                //self.desktop.draw(ui);
+            });
+
+            ui.button("Remove").clicked()
         });
+
+        false
     }
 
-    pub fn export(project: &mut Project) -> anyhow::Result<()> {
-        if !project.debian.export {
+    fn draw_modal(&mut self, ui: &mut egui::Ui) {
+        if self.export {
+            ui.horizontal(|ui| {
+                ui.label(".deb package status: ");
+                ui.label(RichText::new(format!("{}", self.status)).color(self.status.color()));
+
+                if self.status == CompileStatus::InProgress {
+                    ui.spinner();
+                }
+            });
+        }
+    }
+
+    fn get_export(&self) -> bool {
+        self.export
+    }
+
+    fn get_status(&mut self) -> &mut CompileStatus {
+        &mut self.status
+    }
+
+    fn get_handler(&mut self) -> &mut EventHandler {
+        &mut self.handler
+    }
+
+    fn compile(&mut self, meta: Meta) -> anyhow::Result<()> {
+        if !self.export {
             return Ok(());
         }
 
-        project.debian.status = CompileStatus::InProgress;
+        self.status = CompileStatus::InProgress;
 
-        if project.name.is_empty() {
+        if meta.name.is_empty() {
             return Err(anyhow::Error::msg("Debian: Project name cannot be empty."));
         }
 
-        if project.version.is_empty() {
+        if meta.version.is_empty() {
             return Err(anyhow::Error::msg(
                 "Debian: Project version cannot be empty.",
             ));
         }
 
-        let work = format!(
-            "test/boondle_debian/{}_{}_all",
-            project.name, project.version
-        );
+        let work = format!("test/boondle_debian/{}_{}_all", meta.name, meta.version);
         let debian = format!("{work}/DEBIAN");
-        let opt = format!("{work}/opt");
         let usr = format!("{work}/usr");
 
         if std::fs::exists("test/boondle_debian")? {
@@ -130,15 +154,15 @@ Description: {info}
         std::fs::create_dir(&debian)?;
 
         // write control file.
-        std::fs::write(format!("{debian}/control"), Self::file_control(project))?;
+        std::fs::write(format!("{debian}/control"), Self::file_control(&meta))?;
 
         // copy prior-install script, if present.
-        if let Some(path) = &project.debian.script_prior {
+        if let Some(path) = &self.script_prior {
             std::fs::copy(path, format!("{debian}/preinst"))?;
         }
 
         // copy after-install script.
-        if let Some(path) = &project.debian.script_after {
+        if let Some(path) = &self.script_after {
             std::fs::copy(path, format!("{debian}/postinst"))?;
         }
 
@@ -151,8 +175,8 @@ Description: {info}
         std::fs::create_dir_all(format!("{usr}/bin"))?;
 
         // copy binary, if present.
-        if let Some(path) = &project.path_binary {
-            std::fs::copy(path, format!("{usr}/bin/{}", project.name))?;
+        if let Some(path) = &self.binary {
+            std::fs::copy(path, format!("{usr}/bin/{}", meta.name))?;
         }
 
         // create application folder.
@@ -160,110 +184,48 @@ Description: {info}
 
         // write .desktop file.
         std::fs::write(
-            format!("{usr}/share/applications/{}.desktop", project.name),
-            project.debian.desktop.create_file(project, false),
+            format!("{usr}/share/applications/{}.desktop", meta.name),
+            meta.create_desktop_file(false),
         )?;
 
         // create icon folder.
         std::fs::create_dir_all(format!("{usr}/share/icons"))?;
 
         // copy icon file, if present.
-        if let Some(path) = &project.icon {
-            std::fs::copy(path, format!("{usr}/share/icons/{}-icon", project.name))?;
+        if let Some(path) = &meta.icon {
+            std::fs::copy(path, format!("{usr}/share/icons/{}-icon", meta.name))?;
         }
 
         //================================================================
 
-        let path = format!("test/{}_{}.deb", project.name, project.version);
-        let tx = project.event_tx.clone().unwrap();
+        let path = format!("test/{}_{}.deb", meta.name, meta.version);
 
-        std::thread::spawn(move || {
-            let out = std::process::Command::new("dpkg-deb")
-                .arg("--build")
-                .arg(work)
-                .arg(path)
-                .output()
-                .unwrap();
+        let mut command = std::process::Command::new("dpkg-deb");
+        command.arg("--build").arg(work).arg(path);
 
-            let event = if out.clone().exit_ok().is_err() {
-                crate::project::Event::Debian(Err(anyhow::Error::msg(
-                    String::from_utf8(out.stderr).unwrap(),
-                )))
-            } else {
-                crate::project::Event::Debian(Ok(()))
-            };
-
-            tx.send(event).unwrap();
-        });
+        self.execute(command);
 
         Ok(())
     }
-
-    fn file_control(project: &Project) -> String {
-        let mut file = Self::FILE_CONTROL.to_string();
-        file = file.replace("{name}", &project.name);
-        file = file.replace("{info}", &project.info);
-        file = file.replace("{from}", &project.from);
-        file = file.replace("{version}", &project.version);
-
-        file
-    }
 }
 
-//================================================================
-
-#[derive(Default, Serialize, Deserialize)]
-pub struct Desktop {
-    pub name_generic: String,
-    pub comment: String,
-    pub category: String,
-    pub key_word: String,
-    pub command_line: bool,
-}
-
-impl Desktop {
-    const FILE_DESKTOP: &'static str = r#"[Desktop Entry]
-Name={name}
-{icon}
-Exec=/usr/bin/{name}
-Type=Application
-Categories=Utility;
+impl Debian {
+    const FILE_CONTROL: &'static str = r#"Package: {name}
+Version: {version}
+Architecture: all
+Essential: no
+Priority: optional
+Depends:
+Maintainer: {from}
+Description: {info}
 "#;
 
-    pub fn draw(&mut self, ui: &mut egui::Ui) {
-        ui.label("Generic Name");
-        ui.text_edit_singleline(&mut self.name_generic);
-
-        ui.label("Comment");
-        ui.text_edit_singleline(&mut self.comment);
-
-        ui.label("Category");
-        ui.text_edit_singleline(&mut self.category);
-
-        ui.label("Key-Word List");
-        ui.text_edit_singleline(&mut self.key_word);
-
-        ui.checkbox(&mut self.command_line, "Command-Line Application");
-    }
-
-    pub fn create_file(&self, project: &Project, icon_root: bool) -> String {
-        let icon = if icon_root {
-            format!("Icon=/{}-icon", &project.name)
-        } else {
-            format!("Icon=/usr/share/icons/{}-icon", &project.name)
-        };
-
-        let mut file = Self::FILE_DESKTOP.to_string();
-        file = file.replace("{name}", &project.name);
-        file = file.replace("{icon}", &icon);
-        //file = file.replace("{name_generic}", &self.name_generic);
-        //file = file.replace(
-        //    "{command_line}",
-        //    if self.command_line { "true" } else { "false" },
-        //);
-        //file = file.replace("{comment}", &self.comment);
-        //file = file.replace("{category}", &self.category);
-        //file = file.replace("{key_word}", &self.key_word);
+    fn file_control(meta: &Meta) -> String {
+        let mut file = Self::FILE_CONTROL.to_string();
+        file = file.replace("{name}", &meta.name);
+        file = file.replace("{info}", &meta.info);
+        file = file.replace("{from}", &meta.from);
+        file = file.replace("{version}", &meta.version);
 
         file
     }

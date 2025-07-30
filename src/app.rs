@@ -117,7 +117,7 @@ impl eframe::App for App {
                     if ui.button("New Project").clicked()
                         && let Ok(Some(project)) = Self::error(Project::new(), "New Error")
                     {
-                        self.setting.history_add(project.path.clone());
+                        self.setting.history_add(project.meta.path.clone());
                         self.project = Some(project);
                     }
 
@@ -125,7 +125,7 @@ impl eframe::App for App {
                         && let Some(path) = rfd::FileDialog::new().pick_file()
                         && let Ok(project) = Self::error(Project::load(path), "Load Error")
                     {
-                        self.setting.history_add(project.path.clone());
+                        self.setting.history_add(project.meta.path.clone());
                         self.project = Some(project);
                     };
                 });
