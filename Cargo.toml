@@ -1,0 +1,12 @@
+[package]
+name = "boondle"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow     = { version = "1.0.98" }
+eframe     = { version = "0.32.0" }
+egui-modal = { git = "https://github.com/LinoBigatti/egui-modal", branch = "main" }
+rfd        = { version = "0.15.4" }
+serde      = { version = "1.0",    features = ["derive"] }
+postcard   = { version = "1.0.0",  features = ["alloc"]  }
