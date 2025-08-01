@@ -54,12 +54,22 @@ mod app;
 mod exporter;
 mod project;
 mod setting;
+mod terminal;
+
+use crate::{app::*, terminal::*};
 
 //================================================================
 
-use crate::app::*;
+use std::error;
 
-fn main() -> eframe::Result {
-    let option = eframe::NativeOptions::default();
-    eframe::run_native("Boondle", option, Box::new(|cc| Ok(Box::new(App::new(cc)))))
+//================================================================
+
+fn main() -> std::result::Result<(), Box<dyn error::Error>> {
+    // check if a command has been sent to us, if it hasn't, spawn GUI.
+    if !Terminal::run()? {
+        let option = eframe::NativeOptions::default();
+        eframe::run_native("Boondle", option, Box::new(|cc| Ok(Box::new(App::new(cc)))))?;
+    }
+
+    Ok(())
 }

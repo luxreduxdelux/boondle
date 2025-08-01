@@ -50,51 +50,69 @@
 
 use crate::{
     app::App,
-    exporter::export::{EventHandler, Export},
+    exporter::{
+        export,
+        export::{EventHandler, Export},
+    },
     project::{CompileStatus, Meta},
 };
 
 //================================================================
 
-use eframe::egui::{self, RichText};
+use eframe::egui::{self, CollapsingHeader, RichText};
 use serde::{Deserialize, Serialize};
 
 //================================================================
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct AppImage {
-    pub binary: Option<String>,
-    pub script: Option<String>,
-    //pub desktop: crate::exporter::debian::Desktop,
-    pub export: bool,
+    tag: String,
+    binary: Option<String>,
+    script: Option<String>,
+    export: bool,
     #[serde(skip)]
-    pub status: CompileStatus,
+    remove: bool,
     #[serde(skip)]
-    pub handler: EventHandler,
+    status: CompileStatus,
+    #[serde(skip)]
+    handler: EventHandler,
 }
 
 #[typetag::serde]
 impl Export for AppImage {
-    fn draw_setup(&mut self, ui: &mut egui::Ui) -> bool {
-        ui.collapsing("AppImage Package (.AppImage)", |ui| {
+    fn draw_setup(&mut self, ui: &mut egui::Ui) {
+        let header = CollapsingHeader::new(export::format_tag(
+            "AppImage Package (.AppImage)",
+            &self.tag,
+        ))
+        .id_salt("app_image");
+
+        header.show(ui, |ui| {
             ui.checkbox(&mut self.export, "Export Package");
 
             ui.add_enabled_ui(self.export, |ui| {
+                ui.text_edit_singleline(&mut self.tag);
+
                 App::pick_file(ui, "Binary", &mut self.binary);
                 App::pick_file(ui, "After-Installation Script", &mut self.script);
                 //self.desktop.draw(ui);
             });
 
-            ui.button("Remove").clicked()
-        });
+            ui.separator();
 
-        false
+            if ui.button("Remove").clicked() {
+                self.remove = true;
+            }
+        });
     }
 
     fn draw_modal(&mut self, ui: &mut egui::Ui) {
         if self.export {
             ui.horizontal(|ui| {
-                ui.label(".AppImage package status: ");
+                ui.label(export::format_tag(
+                    "AppImage Package (.AppImage)",
+                    &self.tag,
+                ));
                 ui.label(RichText::new(format!("{}", self.status)).color(self.status.color()));
 
                 if self.status == CompileStatus::InProgress {
@@ -106,6 +124,10 @@ impl Export for AppImage {
 
     fn get_export(&self) -> bool {
         self.export
+    }
+
+    fn get_remove(&self) -> bool {
+        self.remove
     }
 
     fn get_status(&mut self) -> &mut CompileStatus {
@@ -132,9 +154,8 @@ impl Export for AppImage {
         let work = format!("test/boondle_app_image/{}.AppDir", meta.name);
         let usr = format!("{work}/usr");
 
-        if std::fs::exists("test/boondle_app_image")? {
-            std::fs::remove_dir_all("test/boondle_app_image")?;
-        }
+        // create boondle_app_image folder.
+        std::fs::create_dir_all("test/boondle_app_image")?;
 
         // create work folder.
         std::fs::create_dir_all(&work)?;
@@ -178,7 +199,12 @@ impl Export for AppImage {
 
         //================================================================
 
-        let path = format!("test/{}_{}.AppImage", meta.name, meta.version);
+        let path = format!(
+            "test/{}_{}{}.AppImage",
+            meta.name,
+            meta.version,
+            export::format_tag_present(&self.tag)
+        );
 
         let mut command = std::process::Command::new("appimagetool");
         command.arg(work).arg(path);

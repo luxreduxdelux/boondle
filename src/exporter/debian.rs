@@ -50,55 +50,77 @@
 
 use crate::{
     app::App,
-    exporter::export::{EventHandler, Export},
+    exporter::{
+        export,
+        export::{EventHandler, Export},
+    },
     project::{CompileStatus, Meta},
 };
 
 //================================================================
 
-use eframe::egui::{self, RichText};
+use eframe::egui::{self, CollapsingHeader, RichText};
 use serde::{Deserialize, Serialize};
 
 //================================================================
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Debian {
-    pub binary: Option<String>,
-    pub script_prior: Option<String>,
-    pub script_after: Option<String>,
-    pub export: bool,
-    pub x86_64: bool,
-    pub architecture: String,
+    tag: String,
+    binary: Option<String>,
+    script_prior: Option<String>,
+    script_after: Option<String>,
+    export: bool,
+    architecture: String,
     #[serde(skip)]
-    pub status: CompileStatus,
+    remove: bool,
     #[serde(skip)]
-    pub handler: EventHandler,
+    status: CompileStatus,
+    #[serde(skip)]
+    handler: EventHandler,
 }
 
 #[typetag::serde]
 impl Export for Debian {
-    fn draw_setup(&mut self, ui: &mut egui::Ui) -> bool {
-        ui.collapsing("Debian Package (.deb)", |ui| {
+    fn draw_setup(&mut self, ui: &mut egui::Ui) {
+        let header = CollapsingHeader::new(export::format_tag("Debian Package (.deb)", &self.tag))
+            .id_salt("debian");
+
+        header.show(ui, |ui| {
             ui.checkbox(&mut self.export, "Export Package");
 
             ui.add_enabled_ui(self.export, |ui| {
+                ui.text_edit_singleline(&mut self.tag);
+
                 App::pick_file(ui, "Binary", &mut self.binary);
                 App::pick_file(ui, "Prior-Installation Script", &mut self.script_prior);
                 App::pick_file(ui, "After-Installation Script", &mut self.script_after);
-                ui.checkbox(&mut self.x86_64, "64-Bit Binary")
-                //self.desktop.draw(ui);
+
+                egui::ComboBox::from_label("Architecture")
+                    .selected_text(&self.architecture)
+                    .show_ui(ui, |ui| {
+                        for architecture in Self::LIST_ARCHITECTURE {
+                            ui.selectable_value(
+                                &mut self.architecture,
+                                architecture.to_string(),
+                                architecture,
+                            );
+                        }
+                    });
             });
 
-            ui.button("Remove").clicked()
-        });
+            ui.separator();
 
-        false
+            if ui.button("Remove").clicked() {
+                self.remove = true;
+            }
+        });
     }
 
     fn draw_modal(&mut self, ui: &mut egui::Ui) {
         if self.export {
             ui.horizontal(|ui| {
-                ui.label(".deb package status: ");
+                ui.label(export::format_tag("Debian Package (.deb)", &self.tag));
                 ui.label(RichText::new(format!("{}", self.status)).color(self.status.color()));
 
                 if self.status == CompileStatus::InProgress {
@@ -110,6 +132,10 @@ impl Export for Debian {
 
     fn get_export(&self) -> bool {
         self.export
+    }
+
+    fn get_remove(&self) -> bool {
+        self.remove
     }
 
     fn get_status(&mut self) -> &mut CompileStatus {
@@ -137,13 +163,15 @@ impl Export for Debian {
             ));
         }
 
-        let work = format!("test/boondle_debian/{}_{}_all", meta.name, meta.version);
+        let work = format!(
+            "test/boondle_debian/{}_{}_{}",
+            meta.name, meta.version, self.architecture
+        );
         let debian = format!("{work}/DEBIAN");
         let usr = format!("{work}/usr");
 
-        if std::fs::exists("test/boondle_debian")? {
-            std::fs::remove_dir_all("test/boondle_debian")?;
-        }
+        // create boondle_debian folder.
+        std::fs::create_dir_all("test/boondle_debian")?;
 
         // create work folder.
         std::fs::create_dir_all(&work)?;
@@ -151,10 +179,10 @@ impl Export for Debian {
         //================================================================
 
         // create DEBIAN folder.
-        std::fs::create_dir(&debian)?;
+        std::fs::create_dir_all(&debian)?;
 
         // write control file.
-        std::fs::write(format!("{debian}/control"), Self::file_control(&meta))?;
+        std::fs::write(format!("{debian}/control"), self.file_control(&meta))?;
 
         // copy prior-install script, if present.
         if let Some(path) = &self.script_prior {
@@ -169,7 +197,7 @@ impl Export for Debian {
         //================================================================
 
         // create usr folder.
-        std::fs::create_dir(&usr)?;
+        std::fs::create_dir_all(&usr)?;
 
         // create binary folder.
         std::fs::create_dir_all(format!("{usr}/bin"))?;
@@ -198,7 +226,12 @@ impl Export for Debian {
 
         //================================================================
 
-        let path = format!("test/{}_{}.deb", meta.name, meta.version);
+        let path = format!(
+            "test/{}_{}_{}.deb",
+            export::format_tag_name(&meta.name, &self.tag),
+            meta.version,
+            self.architecture
+        );
 
         let mut command = std::process::Command::new("dpkg-deb");
         command.arg("--build").arg(work).arg(path);
@@ -210,9 +243,13 @@ impl Export for Debian {
 }
 
 impl Debian {
+    const LIST_ARCHITECTURE: [&'static str; 9] = [
+        "all", "Armel", "armhf", "arm64", "i386", "amd64", "mips64el", "ppc64el", "s390x",
+    ];
+
     const FILE_CONTROL: &'static str = r#"Package: {name}
 Version: {version}
-Architecture: all
+Architecture: {architecture}
 Essential: no
 Priority: optional
 Depends:
@@ -220,12 +257,13 @@ Maintainer: {from}
 Description: {info}
 "#;
 
-    fn file_control(meta: &Meta) -> String {
+    fn file_control(&self, meta: &Meta) -> String {
         let mut file = Self::FILE_CONTROL.to_string();
         file = file.replace("{name}", &meta.name);
         file = file.replace("{info}", &meta.info);
         file = file.replace("{from}", &meta.from);
         file = file.replace("{version}", &meta.version);
+        file = file.replace("{architecture}", &self.architecture);
 
         file
     }

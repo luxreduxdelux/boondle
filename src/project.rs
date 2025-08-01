@@ -50,16 +50,15 @@
 
 use crate::{
     app::App,
-    exporter::{app_image::AppImage, debian::Debian, export::Export},
+    exporter::{app_image::AppImage, debian::Debian, export::Export, script::Script},
 };
-use std::fmt::Display;
 
 //================================================================
 
 use eframe::egui::{self, Color32};
 use egui_modal::Modal;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{fmt::Display, path::PathBuf};
 
 //================================================================
 
@@ -141,7 +140,8 @@ Categories=Utility;
 #[derive(Default, Serialize, Deserialize)]
 pub struct Project {
     pub meta: Meta,
-    pub exporter: Vec<Box<dyn Export>>,
+    pub compile: Vec<Box<dyn Export>>,
+    pub package: Vec<Box<dyn Export>>,
 }
 
 impl Project {
@@ -202,12 +202,26 @@ impl Project {
                 ui.label("Version");
                 ui.text_edit_singleline(&mut self.meta.version);
 
+                ui.label("Generic Name");
+                ui.text_edit_singleline(&mut self.meta.name_generic);
+
+                ui.label("Comment");
+                ui.text_edit_singleline(&mut self.meta.comment);
+
+                ui.label("Category");
+                ui.text_edit_singleline(&mut self.meta.category);
+
+                ui.label("Key-Word");
+                ui.text_edit_singleline(&mut self.meta.key_word);
+
+                ui.checkbox(&mut self.meta.command_line, "Command-Line Application");
+
                 //App::pick_file(ui, "Linux Binary", &mut self.path_binary);
 
                 //================================================================
 
-                for exporter in &mut self.exporter {
-                    exporter.poll_compile();
+                for package in &mut self.package {
+                    package.poll_compile();
                 }
 
                 ui.heading("Compilation");
@@ -215,24 +229,29 @@ impl Project {
 
                 ui.horizontal(|ui| {
                     if ui.button("+ Debian").clicked() {
-                        self.exporter.push(Box::new(Debian::default()));
+                        self.package.push(Box::new(Debian::default()));
                     };
 
                     if ui.button("+ AppImage").clicked() {
-                        self.exporter.push(Box::new(AppImage::default()));
+                        self.package.push(Box::new(AppImage::default()));
+                    };
+
+                    if ui.button("+ Custom Script").clicked() {
+                        self.package.push(Box::new(Script::default()));
                     };
                 });
 
                 ui.separator();
 
-                for exporter in &mut self.exporter {
-                    exporter.draw_setup(ui);
+                for (i, package) in self.package.iter_mut().enumerate() {
+                    ui.push_id(i, |ui| {
+                        package.draw_setup(ui);
+                    });
                 }
 
-                let can_export = self
-                    .exporter
-                    .iter_mut()
-                    .any(|exporter| exporter.get_export());
+                self.package.retain(|package| !package.get_remove());
+
+                let can_package = self.package.iter_mut().any(|package| package.get_export());
 
                 let modal = Modal::new(context, "my_modal");
 
@@ -240,15 +259,15 @@ impl Project {
                     modal.title(ui, "Export State");
 
                     modal.frame(ui, |ui| {
-                        for exporter in &mut self.exporter {
+                        for exporter in &mut self.package {
                             exporter.draw_modal(ui);
                         }
                     });
 
                     let complete = self
-                        .exporter
+                        .package
                         .iter_mut()
-                        .all(|exporter| exporter.success_or_failure());
+                        .all(|package| package.success_or_failure());
 
                     if complete {
                         modal.buttons(ui, |ui| {
@@ -259,12 +278,12 @@ impl Project {
 
                 if ui
                     .add_enabled(
-                        !self.exporter.is_empty() && can_export,
+                        !self.package.is_empty() && can_package,
                         egui::Button::new("Export"),
                     )
                     .clicked()
                 {
-                    if self.compile().is_ok() {
+                    if self.package().is_ok() {
                         modal.open();
                     }
                 }
@@ -272,8 +291,8 @@ impl Project {
         });
     }
 
-    fn compile(&mut self) -> anyhow::Result<()> {
-        for exporter in &mut self.exporter {
+    pub fn package(&mut self) -> anyhow::Result<()> {
+        for exporter in &mut self.package {
             App::error(exporter.compile(self.meta.clone()), "Compile Error")?;
         }
 

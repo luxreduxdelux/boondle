@@ -48,57 +48,78 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use serde::{Deserialize, Serialize};
+use crate::project::Project;
+
+//================================================================
+
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 //================================================================
 
-#[derive(Serialize, Deserialize)]
-pub struct Setting {
-    pub history: Vec<PathBuf>,
-    pub tool_debian: Option<String>,
-    pub tool_app_image: Option<String>,
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+pub struct Terminal {
+    #[command(subcommand)]
+    command: Option<Command>,
 }
 
-impl Setting {
-    const PATH_SETTING: &'static str = "setting.json";
-
-    pub fn history_add(&mut self, path: PathBuf) {
-        if !self.history.contains(&path) {
-            self.history.push(path);
-        }
-    }
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Run the compile step on the project
+    Compile {
+        /// Path to project.
+        #[arg(short, long)]
+        path: PathBuf,
+    },
+    /// Run the package step on the project
+    Package {
+        /// Path to project.
+        #[arg(short, long)]
+        path: PathBuf,
+    },
+    /// Run the compile step, then the package step on the project
+    CompileExport {
+        /// Path to project.
+        #[arg(short, long)]
+        path: PathBuf,
+    },
 }
 
-impl Default for Setting {
-    fn default() -> Self {
-        let mut result = if let Ok(file) = std::fs::read_to_string(Self::PATH_SETTING)
-            && let Ok(data) = serde_json::from_str(&file)
-        {
-            data
-        } else {
-            Self {
-                history: Vec::default(),
-                tool_debian: None,
-                tool_app_image: None,
+impl Terminal {
+    pub fn run() -> anyhow::Result<bool> {
+        let terminal = Terminal::parse();
+
+        if let Some(command) = &terminal.command {
+            match command {
+                Command::Compile { path } => todo!(),
+                Command::Package { path } => {
+                    let mut project = Project::load(path.to_path_buf())?;
+
+                    // package project.
+                    project.package()?;
+
+                    loop {
+                        for package in &mut project.package {
+                            package.poll_compile();
+                        }
+
+                        let complete = project
+                            .package
+                            .iter_mut()
+                            .all(|package| package.success_or_failure());
+
+                        if complete {
+                            break;
+                        }
+                    }
+                }
+                Command::CompileExport { path } => todo!(),
             }
-        };
 
-        result
-            .history
-            .retain(|x| matches!(std::fs::exists(x), Ok(true)));
-
-        result
-    }
-}
-
-impl Drop for Setting {
-    fn drop(&mut self) {
-        // TO-DO throw error message if we can't write the data file.
-        std::fs::write(
-            Self::PATH_SETTING,
-            serde_json::to_string_pretty(self).unwrap(),
-        )
-        .unwrap();
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }

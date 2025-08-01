@@ -66,9 +66,10 @@ pub type EventHandler = Option<(EventTx, EventRx)>;
 
 #[typetag::serde(tag = "type")]
 pub trait Export {
-    fn draw_setup(&mut self, ui: &mut egui::Ui) -> bool;
+    fn draw_setup(&mut self, ui: &mut egui::Ui);
     fn draw_modal(&mut self, ui: &mut egui::Ui);
     fn get_export(&self) -> bool;
+    fn get_remove(&self) -> bool;
     fn get_status(&mut self) -> &mut CompileStatus;
     fn get_handler(&mut self) -> &mut EventHandler;
     fn compile(&mut self, meta: Meta) -> anyhow::Result<()>;
@@ -95,6 +96,14 @@ pub trait Export {
         std::thread::spawn(move || {
             let out = command.output().unwrap();
 
+            if let Ok(stdout) = String::from_utf8(out.stdout.clone()) {
+                println!("{stdout}");
+            }
+
+            if let Ok(stderr) = String::from_utf8(out.stderr.clone()) {
+                println!("{stderr}");
+            }
+
             let event = if out.clone().exit_ok().is_err() {
                 Err(anyhow::Error::msg(String::from_utf8(out.stderr).unwrap()))
             } else {
@@ -120,5 +129,29 @@ pub trait Export {
     /// check if the exporter is no longer in progress.
     fn success_or_failure(&mut self) -> bool {
         !self.get_export() || *self.get_status() != CompileStatus::InProgress
+    }
+}
+
+pub fn format_tag(text: &str, tag: &str) -> String {
+    if tag.is_empty() {
+        text.to_string()
+    } else {
+        format!("{text} - ({tag})")
+    }
+}
+
+pub fn format_tag_name(text: &str, tag: &str) -> String {
+    if tag.is_empty() {
+        text.to_string()
+    } else {
+        format!("{text}-{tag}")
+    }
+}
+
+pub fn format_tag_present(tag: &str) -> String {
+    if tag.is_empty() {
+        "".to_string()
+    } else {
+        format!("_{tag}")
     }
 }
