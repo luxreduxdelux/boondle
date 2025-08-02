@@ -48,12 +48,13 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use crate::project::{CompileStatus, Meta};
+use crate::project::Meta;
 
 //================================================================
 
-use eframe::egui;
+use eframe::egui::{self, Color32};
 use std::{
+    fmt::Display,
     process::Command,
     sync::mpsc::{Receiver, Sender, channel},
 };
@@ -68,20 +69,20 @@ pub type EventHandler = Option<(EventTx, EventRx)>;
 pub trait Export {
     fn draw_setup(&mut self, ui: &mut egui::Ui);
     fn draw_modal(&mut self, ui: &mut egui::Ui);
-    fn get_export(&self) -> bool;
+    fn get_enable(&self) -> bool;
     fn get_remove(&self) -> bool;
-    fn get_status(&mut self) -> &mut CompileStatus;
+    fn get_status(&mut self) -> &mut ExportStatus;
     fn get_handler(&mut self) -> &mut EventHandler;
-    fn compile(&mut self, meta: Meta) -> anyhow::Result<()>;
+    fn run(&mut self, meta: Meta) -> anyhow::Result<()>;
 
     //================================================================
 
-    /// set the current compile status.
-    fn set_status(&mut self, status: CompileStatus) {
+    /// set the current status.
+    fn set_status(&mut self, status: ExportStatus) {
         *self.get_status() = status;
     }
 
-    /// execute compile command.
+    /// execute command.
     fn execute(&mut self, mut command: Command) {
         if self.get_handler().is_none() {
             let (tx, rx) = channel();
@@ -114,21 +115,21 @@ pub trait Export {
         });
     }
 
-    /// poll the compile state.
-    fn poll_compile(&mut self) {
+    /// poll for completion.
+    fn poll_completion(&mut self) {
         if let Some((_, rx)) = self.get_handler()
             && let Ok(event) = rx.try_recv()
         {
             match event {
-                Ok(_) => self.set_status(CompileStatus::Success),
-                Err(error) => self.set_status(CompileStatus::Failure(error.to_string())),
+                Ok(_) => self.set_status(ExportStatus::Success),
+                Err(error) => self.set_status(ExportStatus::Failure(error.to_string())),
             }
         }
     }
 
     /// check if the exporter is no longer in progress.
     fn success_or_failure(&mut self) -> bool {
-        !self.get_export() || *self.get_status() != CompileStatus::InProgress
+        !self.get_enable() || *self.get_status() != ExportStatus::InProgress
     }
 }
 
@@ -153,5 +154,35 @@ pub fn format_tag_present(tag: &str) -> String {
         "".to_string()
     } else {
         format!("_{tag}")
+    }
+}
+
+//================================================================
+
+#[derive(Default, PartialEq, Eq)]
+pub enum ExportStatus {
+    #[default]
+    InProgress,
+    Success,
+    Failure(String),
+}
+
+impl ExportStatus {
+    pub fn color(&self) -> Color32 {
+        match self {
+            ExportStatus::InProgress => Color32::LIGHT_BLUE,
+            ExportStatus::Success => Color32::LIGHT_GREEN,
+            ExportStatus::Failure(_) => Color32::LIGHT_RED,
+        }
+    }
+}
+
+impl Display for ExportStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExportStatus::InProgress => f.write_str("In Progress"),
+            ExportStatus::Success => f.write_str("Success"),
+            ExportStatus::Failure(error) => f.write_str(&format!("Failure: {error}")),
+        }
     }
 }

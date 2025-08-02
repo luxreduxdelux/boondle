@@ -48,14 +48,7 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use crate::{
-    app::App,
-    exporter::{
-        export,
-        export::{EventHandler, Export},
-    },
-    project::{CompileStatus, Meta},
-};
+use crate::{app::App, exporter::export::*, project::Meta};
 
 //================================================================
 
@@ -69,11 +62,11 @@ pub struct AppImage {
     tag: String,
     binary: Option<String>,
     script: Option<String>,
-    export: bool,
+    enable: bool,
     #[serde(skip)]
     remove: bool,
     #[serde(skip)]
-    status: CompileStatus,
+    status: ExportStatus,
     #[serde(skip)]
     handler: EventHandler,
 }
@@ -81,16 +74,13 @@ pub struct AppImage {
 #[typetag::serde]
 impl Export for AppImage {
     fn draw_setup(&mut self, ui: &mut egui::Ui) {
-        let header = CollapsingHeader::new(export::format_tag(
-            "AppImage Package (.AppImage)",
-            &self.tag,
-        ))
-        .id_salt("app_image");
+        let header = CollapsingHeader::new(format_tag("AppImage (.AppImage)", &self.tag))
+            .id_salt("app_image");
 
         header.show(ui, |ui| {
-            ui.checkbox(&mut self.export, "Export Package");
+            ui.checkbox(&mut self.enable, "Enable");
 
-            ui.add_enabled_ui(self.export, |ui| {
+            ui.add_enabled_ui(self.enable, |ui| {
                 ui.text_edit_singleline(&mut self.tag);
 
                 App::pick_file(ui, "Binary", &mut self.binary);
@@ -107,30 +97,27 @@ impl Export for AppImage {
     }
 
     fn draw_modal(&mut self, ui: &mut egui::Ui) {
-        if self.export {
+        if self.enable {
             ui.horizontal(|ui| {
-                ui.label(export::format_tag(
-                    "AppImage Package (.AppImage)",
-                    &self.tag,
-                ));
+                ui.label(format_tag("AppImage (.AppImage)", &self.tag));
                 ui.label(RichText::new(format!("{}", self.status)).color(self.status.color()));
 
-                if self.status == CompileStatus::InProgress {
+                if self.status == ExportStatus::InProgress {
                     ui.spinner();
                 }
             });
         }
     }
 
-    fn get_export(&self) -> bool {
-        self.export
+    fn get_enable(&self) -> bool {
+        self.enable
     }
 
     fn get_remove(&self) -> bool {
         self.remove
     }
 
-    fn get_status(&mut self) -> &mut CompileStatus {
+    fn get_status(&mut self) -> &mut ExportStatus {
         &mut self.status
     }
 
@@ -138,12 +125,12 @@ impl Export for AppImage {
         &mut self.handler
     }
 
-    fn compile(&mut self, meta: Meta) -> anyhow::Result<()> {
-        if !self.export {
+    fn run(&mut self, meta: Meta) -> anyhow::Result<()> {
+        if !self.enable {
             return Ok(());
         }
 
-        self.status = CompileStatus::InProgress;
+        self.status = ExportStatus::InProgress;
 
         if meta.name.is_empty() {
             return Err(anyhow::Error::msg(
@@ -203,7 +190,7 @@ impl Export for AppImage {
             "test/{}_{}{}.AppImage",
             meta.name,
             meta.version,
-            export::format_tag_present(&self.tag)
+            format_tag_present(&self.tag)
         );
 
         let mut command = std::process::Command::new("appimagetool");

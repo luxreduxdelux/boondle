@@ -67,8 +67,19 @@ use std::error;
 fn main() -> std::result::Result<(), Box<dyn error::Error>> {
     // check if a command has been sent to us, if it hasn't, spawn GUI.
     if !Terminal::run()? {
-        let option = eframe::NativeOptions::default();
-        eframe::run_native("Boondle", option, Box::new(|cc| Ok(Box::new(App::new(cc)))))?;
+        // set window data.
+        let configuration = eframe::NativeOptions {
+            viewport: eframe::egui::ViewportBuilder::default().with_inner_size((1280.0, 720.0)),
+            centered: true,
+            ..Default::default()
+        };
+
+        // run window.
+        eframe::run_native(
+            "Boondle",
+            configuration,
+            Box::new(|cc| Ok(Box::new(App::new(cc)))),
+        )?;
     }
 
     Ok(())

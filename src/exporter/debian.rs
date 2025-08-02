@@ -48,14 +48,7 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use crate::{
-    app::App,
-    exporter::{
-        export,
-        export::{EventHandler, Export},
-    },
-    project::{CompileStatus, Meta},
-};
+use crate::{app::App, exporter::export::*, project::Meta};
 
 //================================================================
 
@@ -70,12 +63,12 @@ pub struct Debian {
     binary: Option<String>,
     script_prior: Option<String>,
     script_after: Option<String>,
-    export: bool,
+    enable: bool,
     architecture: String,
     #[serde(skip)]
     remove: bool,
     #[serde(skip)]
-    status: CompileStatus,
+    status: ExportStatus,
     #[serde(skip)]
     handler: EventHandler,
 }
@@ -83,13 +76,13 @@ pub struct Debian {
 #[typetag::serde]
 impl Export for Debian {
     fn draw_setup(&mut self, ui: &mut egui::Ui) {
-        let header = CollapsingHeader::new(export::format_tag("Debian Package (.deb)", &self.tag))
-            .id_salt("debian");
+        let header =
+            CollapsingHeader::new(format_tag("Debian (.deb)", &self.tag)).id_salt("debian");
 
         header.show(ui, |ui| {
-            ui.checkbox(&mut self.export, "Export Package");
+            ui.checkbox(&mut self.enable, "Enable");
 
-            ui.add_enabled_ui(self.export, |ui| {
+            ui.add_enabled_ui(self.enable, |ui| {
                 ui.text_edit_singleline(&mut self.tag);
 
                 App::pick_file(ui, "Binary", &mut self.binary);
@@ -118,27 +111,27 @@ impl Export for Debian {
     }
 
     fn draw_modal(&mut self, ui: &mut egui::Ui) {
-        if self.export {
+        if self.enable {
             ui.horizontal(|ui| {
-                ui.label(export::format_tag("Debian Package (.deb)", &self.tag));
+                ui.label(format_tag("Debian (.deb)", &self.tag));
                 ui.label(RichText::new(format!("{}", self.status)).color(self.status.color()));
 
-                if self.status == CompileStatus::InProgress {
+                if self.status == ExportStatus::InProgress {
                     ui.spinner();
                 }
             });
         }
     }
 
-    fn get_export(&self) -> bool {
-        self.export
+    fn get_enable(&self) -> bool {
+        self.enable
     }
 
     fn get_remove(&self) -> bool {
         self.remove
     }
 
-    fn get_status(&mut self) -> &mut CompileStatus {
+    fn get_status(&mut self) -> &mut ExportStatus {
         &mut self.status
     }
 
@@ -146,12 +139,12 @@ impl Export for Debian {
         &mut self.handler
     }
 
-    fn compile(&mut self, meta: Meta) -> anyhow::Result<()> {
-        if !self.export {
+    fn run(&mut self, meta: Meta) -> anyhow::Result<()> {
+        if !self.enable {
             return Ok(());
         }
 
-        self.status = CompileStatus::InProgress;
+        self.status = ExportStatus::InProgress;
 
         if meta.name.is_empty() {
             return Err(anyhow::Error::msg("Debian: Project name cannot be empty."));
@@ -228,7 +221,7 @@ impl Export for Debian {
 
         let path = format!(
             "test/{}_{}_{}.deb",
-            export::format_tag_name(&meta.name, &self.tag),
+            format_tag_name(&meta.name, &self.tag),
             meta.version,
             self.architecture
         );

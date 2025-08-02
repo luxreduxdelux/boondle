@@ -101,7 +101,7 @@ impl Terminal {
 
                     loop {
                         for package in &mut project.package {
-                            package.poll_compile();
+                            package.poll_completion();
                         }
 
                         let complete = project

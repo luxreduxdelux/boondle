@@ -55,40 +55,12 @@ use crate::{
 
 //================================================================
 
-use eframe::egui::{self, Color32};
+use eframe::egui::{self, Response};
 use egui_modal::Modal;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, path::PathBuf};
+use std::path::PathBuf;
 
 //================================================================
-
-#[derive(Default, PartialEq, Eq)]
-pub enum CompileStatus {
-    #[default]
-    InProgress,
-    Success,
-    Failure(String),
-}
-
-impl CompileStatus {
-    pub fn color(&self) -> Color32 {
-        match self {
-            CompileStatus::InProgress => Color32::LIGHT_BLUE,
-            CompileStatus::Success => Color32::LIGHT_GREEN,
-            CompileStatus::Failure(_) => Color32::LIGHT_RED,
-        }
-    }
-}
-
-impl Display for CompileStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CompileStatus::InProgress => f.write_str("In Progress"),
-            CompileStatus::Success => f.write_str("Success"),
-            CompileStatus::Failure(error) => f.write_str(&format!("Failure: {error}")),
-        }
-    }
-}
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct Meta {
@@ -169,141 +141,206 @@ impl Project {
 
     pub fn draw(&mut self, context: &egui::Context) {
         egui::TopBottomPanel::top("layout").show(context, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
-                    let _ = App::error(self.save(self.meta.path.clone()), "Save Error");
-                };
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("New").clicked() {
+                        todo!()
+                    };
 
-                if ui.button("Load").clicked()
-                    && let Some(path) = rfd::FileDialog::new().pick_file()
-                    && let Ok(data) = App::error(Self::load(path), "Load Error")
-                {
-                    *self = data;
-                };
+                    if ui.button("Save").clicked() {
+                        let _ = App::error(self.save(self.meta.path.clone()), "Save Error");
+                    };
+
+                    if ui.button("Load").clicked()
+                        && let Some(path) = rfd::FileDialog::new().pick_file()
+                        && let Ok(data) = App::error(Self::load(path), "Load Error")
+                    {
+                        *self = data;
+                    };
+                });
             });
         });
 
         egui::CentralPanel::default().show(context, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading("Project Information");
-                ui.separator();
-
-                ui.label("Name");
-                ui.text_edit_singleline(&mut self.meta.name);
-
-                App::pick_file(ui, "Icon", &mut self.meta.icon);
-
-                ui.label("Info");
-                ui.text_edit_singleline(&mut self.meta.info);
-
-                ui.label("From");
-                ui.text_edit_singleline(&mut self.meta.from);
-
-                ui.label("Version");
-                ui.text_edit_singleline(&mut self.meta.version);
-
-                ui.label("Generic Name");
-                ui.text_edit_singleline(&mut self.meta.name_generic);
-
-                ui.label("Comment");
-                ui.text_edit_singleline(&mut self.meta.comment);
-
-                ui.label("Category");
-                ui.text_edit_singleline(&mut self.meta.category);
-
-                ui.label("Key-Word");
-                ui.text_edit_singleline(&mut self.meta.key_word);
-
-                ui.checkbox(&mut self.meta.command_line, "Command-Line Application");
-
-                //App::pick_file(ui, "Linux Binary", &mut self.path_binary);
+                self.draw_project(ui);
+                self.draw_compile(ui);
+                self.draw_package(ui);
 
                 //================================================================
 
-                for package in &mut self.package {
-                    package.poll_compile();
-                }
+                let modal_compile = Modal::new(context, "modal_compile");
 
-                ui.heading("Compilation");
-                ui.separator();
+                modal_compile.show(|ui| {
+                    modal_compile.title(ui, "Compile");
 
-                ui.horizontal(|ui| {
-                    if ui.button("+ Debian").clicked() {
-                        self.package.push(Box::new(Debian::default()));
-                    };
-
-                    if ui.button("+ AppImage").clicked() {
-                        self.package.push(Box::new(AppImage::default()));
-                    };
-
-                    if ui.button("+ Custom Script").clicked() {
-                        self.package.push(Box::new(Script::default()));
-                    };
-                });
-
-                ui.separator();
-
-                for (i, package) in self.package.iter_mut().enumerate() {
-                    ui.push_id(i, |ui| {
-                        package.draw_setup(ui);
-                    });
-                }
-
-                self.package.retain(|package| !package.get_remove());
-
-                let can_package = self.package.iter_mut().any(|package| package.get_export());
-
-                let modal = Modal::new(context, "my_modal");
-
-                modal.show(|ui| {
-                    modal.title(ui, "Export State");
-
-                    modal.frame(ui, |ui| {
-                        for exporter in &mut self.package {
-                            exporter.draw_modal(ui);
+                    modal_compile.frame(ui, |ui| {
+                        for compile in &mut self.compile {
+                            compile.draw_modal(ui);
                         }
                     });
 
-                    let complete = self
-                        .package
+                    let complete_compile = self
+                        .compile
                         .iter_mut()
-                        .all(|package| package.success_or_failure());
+                        .all(|compile| compile.success_or_failure());
 
-                    if complete {
-                        modal.buttons(ui, |ui| {
-                            if modal.button(ui, "Close").clicked() {};
+                    if complete_compile {
+                        modal_compile.buttons(ui, |ui| {
+                            if modal_compile.button(ui, "Close").clicked() {};
                         });
                     }
                 });
 
-                if ui
-                    .add_enabled(
-                        !self.package.is_empty() && can_package,
-                        egui::Button::new("Export"),
-                    )
-                    .clicked()
-                {
-                    if self.package().is_ok() {
-                        modal.open();
+                //================================================================
+
+                let modal_package = Modal::new(context, "modal_package");
+
+                modal_package.show(|ui| {
+                    modal_compile.title(ui, "Package");
+
+                    modal_package.frame(ui, |ui| {
+                        for package in &mut self.package {
+                            package.draw_modal(ui);
+                        }
+                    });
+
+                    let complete_package = self
+                        .package
+                        .iter_mut()
+                        .all(|package| package.success_or_failure());
+
+                    if complete_package {
+                        modal_package.buttons(ui, |ui| {
+                            if modal_package.button(ui, "Close").clicked() {};
+                        });
                     }
+                });
+
+                //================================================================
+
+                let can_compile = !self.compile.is_empty()
+                    && self.compile.iter_mut().any(|compile| compile.get_enable());
+                let can_package = !self.package.is_empty()
+                    && self.package.iter_mut().any(|package| package.get_enable());
+
+                if Self::button_enable(ui, can_compile, "Compile").clicked()
+                    && self.compile().is_ok()
+                {
+                    modal_compile.open();
+                }
+
+                if Self::button_enable(ui, can_package, "Package").clicked()
+                    && self.package().is_ok()
+                {
+                    modal_package.open();
                 }
             });
         });
     }
 
-    pub fn package(&mut self) -> anyhow::Result<()> {
-        for exporter in &mut self.package {
-            App::error(exporter.compile(self.meta.clone()), "Compile Error")?;
+    fn entry_label(ui: &mut egui::Ui, text: &mut String, label: &str) {
+        ui.label(label);
+        ui.text_edit_singleline(text);
+    }
+
+    fn button_enable(ui: &mut egui::Ui, enable: bool, label: &str) -> Response {
+        ui.add_enabled(enable, egui::Button::new(label))
+    }
+
+    pub fn compile(&mut self) -> anyhow::Result<()> {
+        for compile in &mut self.compile {
+            App::error(compile.run(self.meta.clone()), "Compile Error")?;
         }
 
         Ok(())
+    }
+
+    pub fn package(&mut self) -> anyhow::Result<()> {
+        for package in &mut self.package {
+            App::error(package.run(self.meta.clone()), "Compile Error")?;
+        }
+
+        Ok(())
+    }
+
+    pub fn load(path: PathBuf) -> anyhow::Result<Self> {
+        Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
     }
 
     fn save(&self, path: PathBuf) -> anyhow::Result<()> {
         Ok(std::fs::write(path, serde_json::to_string_pretty(self)?)?)
     }
 
-    pub fn load(path: PathBuf) -> anyhow::Result<Self> {
-        Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
+    #[rustfmt::skip]
+    fn draw_project(&mut self, ui: &mut egui::Ui) {
+        ui.collapsing("Project", |ui| {
+            Self::entry_label(ui, &mut self.meta.name,         "Name");
+            Self::entry_label(ui, &mut self.meta.info,         "Info");
+            Self::entry_label(ui, &mut self.meta.from,         "From");
+            Self::entry_label(ui, &mut self.meta.version,      "Version");
+            Self::entry_label(ui, &mut self.meta.name_generic, "Generic Name");
+            Self::entry_label(ui, &mut self.meta.comment,      "Comment");
+            Self::entry_label(ui, &mut self.meta.category,     "Category");
+            Self::entry_label(ui, &mut self.meta.key_word,     "Key-Word");
+
+            App::pick_file(ui, "Icon", &mut self.meta.icon);
+
+            ui.checkbox(&mut self.meta.command_line, "Command-Line Application");
+        });
+    }
+
+    fn draw_compile(&mut self, ui: &mut egui::Ui) {
+        for compile in &mut self.compile {
+            compile.poll_completion();
+        }
+
+        ui.collapsing("Compile", |ui| {
+            if ui.button("+ Custom Script").clicked() {
+                self.compile.push(Box::new(Script::default()));
+            };
+
+            ui.separator();
+
+            for (i, compile) in self.compile.iter_mut().enumerate() {
+                ui.push_id(i, |ui| {
+                    compile.draw_setup(ui);
+                });
+            }
+        });
+
+        self.compile.retain(|compile| !compile.get_remove());
+    }
+
+    fn draw_package(&mut self, ui: &mut egui::Ui) {
+        for package in &mut self.package {
+            package.poll_completion();
+        }
+
+        ui.collapsing("Package", |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("+ Debian").clicked() {
+                    self.package.push(Box::new(Debian::default()));
+                };
+
+                if ui.button("+ AppImage").clicked() {
+                    self.package.push(Box::new(AppImage::default()));
+                };
+
+                if ui.button("+ Custom Script").clicked() {
+                    self.package.push(Box::new(Script::default()));
+                };
+            });
+
+            ui.separator();
+
+            for (i, package) in self.package.iter_mut().enumerate() {
+                ui.push_id(i, |ui| {
+                    package.draw_setup(ui);
+                });
+            }
+        });
+
+        self.package.retain(|package| !package.get_remove());
     }
 }

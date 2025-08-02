@@ -48,14 +48,7 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use crate::{
-    app::App,
-    exporter::{
-        export,
-        export::{EventHandler, Export},
-    },
-    project::{CompileStatus, Meta},
-};
+use crate::{app::App, exporter::export::*, project::Meta};
 
 //================================================================
 
@@ -98,11 +91,11 @@ pub struct Script {
     tag: String,
     script: Option<String>,
     layout: Vec<Layout>,
-    export: bool,
+    enable: bool,
     #[serde(skip)]
     remove: bool,
     #[serde(skip)]
-    status: CompileStatus,
+    status: ExportStatus,
     #[serde(skip)]
     handler: EventHandler,
 }
@@ -110,13 +103,13 @@ pub struct Script {
 #[typetag::serde]
 impl Export for Script {
     fn draw_setup(&mut self, ui: &mut egui::Ui) {
-        let header = CollapsingHeader::new(export::format_tag("Custom Script Package", &self.tag))
-            .id_salt("custom_script");
+        let header =
+            CollapsingHeader::new(format_tag("Custom Script", &self.tag)).id_salt("custom_script");
 
         header.show(ui, |ui| {
-            ui.checkbox(&mut self.export, "Export Package");
+            ui.checkbox(&mut self.enable, "Enable");
 
-            ui.add_enabled_ui(self.export, |ui| {
+            ui.add_enabled_ui(self.enable, |ui| {
                 ui.text_edit_singleline(&mut self.tag);
 
                 App::pick_file(ui, "Script", &mut self.script);
@@ -242,27 +235,27 @@ impl Export for Script {
     }
 
     fn draw_modal(&mut self, ui: &mut egui::Ui) {
-        if self.export {
+        if self.enable {
             ui.horizontal(|ui| {
-                ui.label(export::format_tag("Custom Script Package", &self.tag));
+                ui.label(format_tag("Custom Script", &self.tag));
                 ui.label(RichText::new(format!("{}", self.status)).color(self.status.color()));
 
-                if self.status == CompileStatus::InProgress {
+                if self.status == ExportStatus::InProgress {
                     ui.spinner();
                 }
             });
         }
     }
 
-    fn get_export(&self) -> bool {
-        self.export
+    fn get_enable(&self) -> bool {
+        self.enable
     }
 
     fn get_remove(&self) -> bool {
         self.remove
     }
 
-    fn get_status(&mut self) -> &mut CompileStatus {
+    fn get_status(&mut self) -> &mut ExportStatus {
         &mut self.status
     }
 
@@ -270,12 +263,12 @@ impl Export for Script {
         &mut self.handler
     }
 
-    fn compile(&mut self, meta: Meta) -> anyhow::Result<()> {
-        if !self.export {
+    fn run(&mut self, meta: Meta) -> anyhow::Result<()> {
+        if !self.enable {
             return Ok(());
         }
 
-        self.status = CompileStatus::InProgress;
+        self.status = ExportStatus::InProgress;
 
         if meta.name.is_empty() {
             return Err(anyhow::Error::msg(
@@ -291,6 +284,17 @@ impl Export for Script {
 
         if let Some(script) = &self.script {
             let mut command = std::process::Command::new(script);
+
+            // TO-DO move into own function?
+            command.env("BOONDLE_NAME", meta.name);
+            command.env("BOONDLE_ICON", meta.icon.unwrap_or_default());
+            command.env("BOONDLE_INFO", meta.info);
+            command.env("BOONDLE_FROM", meta.from);
+            command.env("BOONDLE_VERSION", meta.version);
+            command.env("BOONDLE_NAME_GENERIC", meta.name_generic);
+            command.env("BOONDLE_NAME_COMMENT", meta.comment);
+            command.env("BOONDLE_NAME_CATEGORY", meta.category);
+            command.env("BOONDLE_NAME_KEY_WORD", meta.key_word);
 
             for widget in &self.layout {
                 match widget {
@@ -309,7 +313,7 @@ impl Export for Script {
 
             self.execute(command);
         } else {
-            self.status = CompileStatus::Success;
+            self.status = ExportStatus::Success;
         }
 
         Ok(())
