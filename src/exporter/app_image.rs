@@ -48,7 +48,11 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use crate::{app::App, exporter::export::*, project::Meta};
+use crate::{
+    app::App,
+    exporter::export::*,
+    project::{Meta, Project},
+};
 
 //================================================================
 
@@ -59,7 +63,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct AppImage {
-    tag: String,
+    name: String,
+    file: String,
     binary: Option<String>,
     script: Option<String>,
     enable: bool,
@@ -74,14 +79,15 @@ pub struct AppImage {
 #[typetag::serde]
 impl Export for AppImage {
     fn draw_setup(&mut self, ui: &mut egui::Ui) {
-        let header = CollapsingHeader::new(format_tag("AppImage (.AppImage)", &self.tag))
+        let header = CollapsingHeader::new(format_name("AppImage (.AppImage)", &self.name))
             .id_salt("app_image");
 
         header.show(ui, |ui| {
             ui.checkbox(&mut self.enable, "Enable");
 
             ui.add_enabled_ui(self.enable, |ui| {
-                ui.text_edit_singleline(&mut self.tag);
+                Project::entry_label(ui, &mut self.name, "Name");
+                Project::entry_label(ui, &mut self.file, "File");
 
                 App::pick_file(ui, "Binary", &mut self.binary);
                 App::pick_file(ui, "After-Installation Script", &mut self.script);
@@ -99,7 +105,7 @@ impl Export for AppImage {
     fn draw_modal(&mut self, ui: &mut egui::Ui) {
         if self.enable {
             ui.horizontal(|ui| {
-                ui.label(format_tag("AppImage (.AppImage)", &self.tag));
+                ui.label(format_name("AppImage (.AppImage)", &self.name));
                 ui.label(RichText::new(format!("{}", self.status)).color(self.status.color()));
 
                 if self.status == ExportStatus::InProgress {
@@ -138,11 +144,18 @@ impl Export for AppImage {
             ));
         }
 
-        let work = format!("test/boondle_app_image/{}.AppDir", meta.name);
+        let work = format!(
+            "{}/boondle_app_image/{}.AppDir",
+            meta.path.display().to_string(),
+            meta.name
+        );
         let usr = format!("{work}/usr");
 
         // create boondle_app_image folder.
-        std::fs::create_dir_all("test/boondle_app_image")?;
+        std::fs::create_dir_all(format!(
+            "{}/boondle_app_image",
+            meta.path.display().to_string()
+        ))?;
 
         // create work folder.
         std::fs::create_dir_all(&work)?;
@@ -186,12 +199,21 @@ impl Export for AppImage {
 
         //================================================================
 
-        let path = format!(
-            "test/{}_{}{}.AppImage",
-            meta.name,
-            meta.version,
-            format_tag_present(&self.tag)
-        );
+        let path = if self.file.is_empty() {
+            format!(
+                "{}/{}_{}{}.AppImage",
+                meta.path.display(),
+                meta.name,
+                meta.version,
+                format_name_present(&self.name)
+            )
+        } else {
+            format!(
+                "{}/{}.AppImage",
+                meta.path.display(),
+                format_file(&self.file, &meta)
+            )
+        };
 
         let mut command = std::process::Command::new("appimagetool");
         command.arg(work).arg(path);

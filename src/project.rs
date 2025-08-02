@@ -118,11 +118,7 @@ pub struct Project {
 
 impl Project {
     pub fn new() -> anyhow::Result<Option<Self>> {
-        if let Some(mut path) = rfd::FileDialog::new().save_file() {
-            path.set_extension("json");
-
-            println!("{path:?}");
-
+        if let Some(path) = rfd::FileDialog::new().pick_folder() {
             let result = Self {
                 meta: Meta {
                     path: path.clone(),
@@ -239,7 +235,7 @@ impl Project {
         });
     }
 
-    fn entry_label(ui: &mut egui::Ui, text: &mut String, label: &str) {
+    pub fn entry_label(ui: &mut egui::Ui, text: &mut String, label: &str) {
         ui.label(label);
         ui.text_edit_singleline(text);
     }
@@ -264,11 +260,15 @@ impl Project {
         Ok(())
     }
 
-    pub fn load(path: PathBuf) -> anyhow::Result<Self> {
+    pub fn load(mut path: PathBuf) -> anyhow::Result<Self> {
+        path.push("boondle.json");
+
         Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
     }
 
-    fn save(&self, path: PathBuf) -> anyhow::Result<()> {
+    fn save(&self, mut path: PathBuf) -> anyhow::Result<()> {
+        path.push("boondle.json");
+
         Ok(std::fs::write(path, serde_json::to_string_pretty(self)?)?)
     }
 

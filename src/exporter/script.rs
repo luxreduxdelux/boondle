@@ -48,7 +48,11 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use crate::{app::App, exporter::export::*, project::Meta};
+use crate::{
+    app::App,
+    exporter::export::*,
+    project::{Meta, Project},
+};
 
 //================================================================
 
@@ -88,7 +92,7 @@ enum Layout {
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Script {
-    tag: String,
+    name: String,
     script: Option<String>,
     layout: Vec<Layout>,
     enable: bool,
@@ -103,14 +107,14 @@ pub struct Script {
 #[typetag::serde]
 impl Export for Script {
     fn draw_setup(&mut self, ui: &mut egui::Ui) {
-        let header =
-            CollapsingHeader::new(format_tag("Custom Script", &self.tag)).id_salt("custom_script");
+        let header = CollapsingHeader::new(format_name("Custom Script", &self.name))
+            .id_salt("custom_script");
 
         header.show(ui, |ui| {
             ui.checkbox(&mut self.enable, "Enable");
 
             ui.add_enabled_ui(self.enable, |ui| {
-                ui.text_edit_singleline(&mut self.tag);
+                Project::entry_label(ui, &mut self.name, "Name");
 
                 App::pick_file(ui, "Script", &mut self.script);
 
@@ -237,7 +241,7 @@ impl Export for Script {
     fn draw_modal(&mut self, ui: &mut egui::Ui) {
         if self.enable {
             ui.horizontal(|ui| {
-                ui.label(format_tag("Custom Script", &self.tag));
+                ui.label(format_name("Custom Script", &self.name));
                 ui.label(RichText::new(format!("{}", self.status)).color(self.status.color()));
 
                 if self.status == ExportStatus::InProgress {

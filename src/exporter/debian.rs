@@ -48,7 +48,11 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use crate::{app::App, exporter::export::*, project::Meta};
+use crate::{
+    app::App,
+    exporter::export::*,
+    project::{Meta, Project},
+};
 
 //================================================================
 
@@ -59,12 +63,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Debian {
-    tag: String,
+    name: String,
+    file: String,
     binary: Option<String>,
     script_prior: Option<String>,
     script_after: Option<String>,
-    enable: bool,
     architecture: String,
+    enable: bool,
     #[serde(skip)]
     remove: bool,
     #[serde(skip)]
@@ -77,13 +82,14 @@ pub struct Debian {
 impl Export for Debian {
     fn draw_setup(&mut self, ui: &mut egui::Ui) {
         let header =
-            CollapsingHeader::new(format_tag("Debian (.deb)", &self.tag)).id_salt("debian");
+            CollapsingHeader::new(format_name("Debian (.deb)", &self.name)).id_salt("debian");
 
         header.show(ui, |ui| {
             ui.checkbox(&mut self.enable, "Enable");
 
             ui.add_enabled_ui(self.enable, |ui| {
-                ui.text_edit_singleline(&mut self.tag);
+                Project::entry_label(ui, &mut self.name, "Name");
+                Project::entry_label(ui, &mut self.file, "File");
 
                 App::pick_file(ui, "Binary", &mut self.binary);
                 App::pick_file(ui, "Prior-Installation Script", &mut self.script_prior);
@@ -113,7 +119,7 @@ impl Export for Debian {
     fn draw_modal(&mut self, ui: &mut egui::Ui) {
         if self.enable {
             ui.horizontal(|ui| {
-                ui.label(format_tag("Debian (.deb)", &self.tag));
+                ui.label(format_name("Debian (.deb)", &self.name));
                 ui.label(RichText::new(format!("{}", self.status)).color(self.status.color()));
 
                 if self.status == ExportStatus::InProgress {
@@ -157,14 +163,17 @@ impl Export for Debian {
         }
 
         let work = format!(
-            "test/boondle_debian/{}_{}_{}",
-            meta.name, meta.version, self.architecture
+            "{}/boondle_debian/{}_{}_{}",
+            meta.path.display(),
+            meta.name,
+            meta.version,
+            self.architecture
         );
         let debian = format!("{work}/DEBIAN");
         let usr = format!("{work}/usr");
 
         // create boondle_debian folder.
-        std::fs::create_dir_all("test/boondle_debian")?;
+        std::fs::create_dir_all(format!("{}/boondle_debian", meta.path.display()))?;
 
         // create work folder.
         std::fs::create_dir_all(&work)?;
@@ -219,12 +228,21 @@ impl Export for Debian {
 
         //================================================================
 
-        let path = format!(
-            "test/{}_{}_{}.deb",
-            format_tag_name(&meta.name, &self.tag),
-            meta.version,
-            self.architecture
-        );
+        let path = if self.file.is_empty() {
+            format!(
+                "{}/{}_{}_{}.deb",
+                meta.path.display(),
+                format_name_label(&meta.name, &self.name),
+                meta.version,
+                self.architecture
+            )
+        } else {
+            format!(
+                "{}/{}.deb",
+                meta.path.display(),
+                format_file(&self.file, &meta)
+            )
+        };
 
         let mut command = std::process::Command::new("dpkg-deb");
         command.arg("--build").arg(work).arg(path);

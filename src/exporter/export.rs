@@ -133,28 +133,42 @@ pub trait Export {
     }
 }
 
-pub fn format_tag(text: &str, tag: &str) -> String {
-    if tag.is_empty() {
+pub fn format_name(text: &str, name: &str) -> String {
+    if name.is_empty() {
         text.to_string()
     } else {
-        format!("{text} - ({tag})")
+        format!("{text} - ({name})")
     }
 }
 
-pub fn format_tag_name(text: &str, tag: &str) -> String {
-    if tag.is_empty() {
+pub fn format_name_label(text: &str, name: &str) -> String {
+    if name.is_empty() {
         text.to_string()
     } else {
-        format!("{text}-{tag}")
+        format!("{text}-{name}")
     }
 }
 
-pub fn format_tag_present(tag: &str) -> String {
-    if tag.is_empty() {
+pub fn format_name_present(name: &str) -> String {
+    if name.is_empty() {
         "".to_string()
     } else {
-        format!("_{tag}")
+        format!("_{name}")
     }
+}
+
+pub fn format_file(file: &str, meta: &Meta) -> String {
+    let mut file = file.to_string();
+    file = file.replace("{name}", &meta.name);
+    file = file.replace("{info}", &meta.info);
+    file = file.replace("{from}", &meta.from);
+    file = file.replace("{version}", &meta.version);
+    file = file.replace("{name_generic}", &meta.name_generic);
+    file = file.replace("{comment}", &meta.comment);
+    file = file.replace("{category}", &meta.category);
+    file = file.replace("{key_word}", &meta.key_word);
+
+    file
 }
 
 //================================================================
