@@ -69,22 +69,6 @@ impl App {
         Self::default()
     }
 
-    pub fn pick_file(ui: &mut egui::Ui, name: &str, path: &mut Option<String>) {
-        ui.horizontal(|ui| {
-            if ui.button(name).clicked()
-                && let Some(file) = rfd::FileDialog::new().pick_file()
-            {
-                *path = Some(file.display().to_string());
-            }
-
-            if let Some(path) = &path {
-                ui.label(format!("Path: {path}"));
-            } else {
-                ui.label("Path: <none>");
-            }
-        });
-    }
-
     pub fn error<T>(result: anyhow::Result<T>, title: &str) -> anyhow::Result<T> {
         if let Err(ref error) = result {
             rfd::MessageDialog::new()

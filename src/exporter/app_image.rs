@@ -65,8 +65,8 @@ use serde::{Deserialize, Serialize};
 pub struct AppImage {
     name: String,
     file: String,
-    binary: Option<String>,
-    script: Option<String>,
+    binary: String,
+    script: String,
     enable: bool,
     #[serde(skip)]
     remove: bool,
@@ -89,8 +89,8 @@ impl Export for AppImage {
                 Project::entry_label(ui, &mut self.name, "Name");
                 Project::entry_label(ui, &mut self.file, "File");
 
-                App::pick_file(ui, "Binary", &mut self.binary);
-                App::pick_file(ui, "After-Installation Script", &mut self.script);
+                Project::pick_file(ui, "Binary", &mut self.binary);
+                Project::pick_file(ui, "After-Installation Script", &mut self.script);
                 //self.desktop.draw(ui);
             });
 
@@ -144,18 +144,11 @@ impl Export for AppImage {
             ));
         }
 
-        let work = format!(
-            "{}/boondle_app_image/{}.AppDir",
-            meta.path.display().to_string(),
-            meta.name
-        );
+        let work = format!("boondle_app_image/{}.AppDir", meta.name);
         let usr = format!("{work}/usr");
 
         // create boondle_app_image folder.
-        std::fs::create_dir_all(format!(
-            "{}/boondle_app_image",
-            meta.path.display().to_string()
-        ))?;
+        std::fs::create_dir_all(format!("boondle_app_image"))?;
 
         // create work folder.
         std::fs::create_dir_all(&work)?;
@@ -163,8 +156,8 @@ impl Export for AppImage {
         //================================================================
 
         // copy after-install script.
-        if let Some(path) = &self.script {
-            std::fs::copy(path, format!("{work}/AppRun"))?;
+        if !self.script.is_empty() {
+            std::fs::copy(&self.script, format!("{work}/AppRun"))?;
         } else {
             // write AppRun file.
             std::fs::write(format!("{work}/AppRun"), Self::file_app_run(&meta))?;
@@ -187,32 +180,27 @@ impl Export for AppImage {
         std::fs::create_dir_all(format!("{usr}/bin"))?;
 
         // copy binary, if present.
-        if let Some(path) = &self.binary {
-            std::fs::copy(path, format!("{usr}/bin/{}", meta.name))?;
+        if !self.binary.is_empty() {
+            std::fs::copy(&self.binary, format!("{usr}/bin/{}", meta.name))?;
         }
 
         // copy icon file, if present.
-        if let Some(path) = &meta.icon {
+        if !meta.icon.is_empty() {
             // appimagetool won't work if we don't have an extension at the end...
-            std::fs::copy(path, format!("{work}/{}-icon.png", meta.name))?;
+            std::fs::copy(&meta.icon, format!("{work}/{}-icon.png", meta.name))?;
         }
 
         //================================================================
 
         let path = if self.file.is_empty() {
             format!(
-                "{}/{}_{}{}.AppImage",
-                meta.path.display(),
+                "{}_{}{}.AppImage",
                 meta.name,
                 meta.version,
                 format_name_present(&self.name)
             )
         } else {
-            format!(
-                "{}/{}.AppImage",
-                meta.path.display(),
-                format_file(&self.file, &meta)
-            )
+            format!("{}.AppImage", format_file(&self.file, &meta))
         };
 
         let mut command = std::process::Command::new("appimagetool");

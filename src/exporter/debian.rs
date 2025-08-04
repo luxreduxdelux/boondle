@@ -65,9 +65,9 @@ use serde::{Deserialize, Serialize};
 pub struct Debian {
     name: String,
     file: String,
-    binary: Option<String>,
-    script_prior: Option<String>,
-    script_after: Option<String>,
+    binary: String,
+    script_prior: String,
+    script_after: String,
     architecture: String,
     enable: bool,
     #[serde(skip)]
@@ -91,9 +91,9 @@ impl Export for Debian {
                 Project::entry_label(ui, &mut self.name, "Name");
                 Project::entry_label(ui, &mut self.file, "File");
 
-                App::pick_file(ui, "Binary", &mut self.binary);
-                App::pick_file(ui, "Prior-Installation Script", &mut self.script_prior);
-                App::pick_file(ui, "After-Installation Script", &mut self.script_after);
+                Project::pick_file(ui, "Binary", &mut self.binary);
+                Project::pick_file(ui, "Prior-Installation Script", &mut self.script_prior);
+                Project::pick_file(ui, "After-Installation Script", &mut self.script_after);
 
                 egui::ComboBox::from_label("Architecture")
                     .selected_text(&self.architecture)
@@ -163,17 +163,14 @@ impl Export for Debian {
         }
 
         let work = format!(
-            "{}/boondle_debian/{}_{}_{}",
-            meta.path.display(),
-            meta.name,
-            meta.version,
-            self.architecture
+            "boondle_debian/{}_{}_{}",
+            meta.name, meta.version, self.architecture
         );
         let debian = format!("{work}/DEBIAN");
         let usr = format!("{work}/usr");
 
         // create boondle_debian folder.
-        std::fs::create_dir_all(format!("{}/boondle_debian", meta.path.display()))?;
+        std::fs::create_dir_all("boondle_debian")?;
 
         // create work folder.
         std::fs::create_dir_all(&work)?;
@@ -187,13 +184,13 @@ impl Export for Debian {
         std::fs::write(format!("{debian}/control"), self.file_control(&meta))?;
 
         // copy prior-install script, if present.
-        if let Some(path) = &self.script_prior {
-            std::fs::copy(path, format!("{debian}/preinst"))?;
+        if !self.script_prior.is_empty() {
+            std::fs::copy(&self.script_prior, format!("{debian}/preinst"))?;
         }
 
         // copy after-install script.
-        if let Some(path) = &self.script_after {
-            std::fs::copy(path, format!("{debian}/postinst"))?;
+        if !self.script_after.is_empty() {
+            std::fs::copy(&self.script_after, format!("{debian}/postinst"))?;
         }
 
         //================================================================
@@ -205,8 +202,8 @@ impl Export for Debian {
         std::fs::create_dir_all(format!("{usr}/bin"))?;
 
         // copy binary, if present.
-        if let Some(path) = &self.binary {
-            std::fs::copy(path, format!("{usr}/bin/{}", meta.name))?;
+        if !self.binary.is_empty() {
+            std::fs::copy(&self.binary, format!("{usr}/bin/{}", meta.name))?;
         }
 
         // create application folder.
@@ -222,26 +219,21 @@ impl Export for Debian {
         std::fs::create_dir_all(format!("{usr}/share/icons"))?;
 
         // copy icon file, if present.
-        if let Some(path) = &meta.icon {
-            std::fs::copy(path, format!("{usr}/share/icons/{}-icon", meta.name))?;
+        if !meta.icon.is_empty() {
+            std::fs::copy(&meta.icon, format!("{usr}/share/icons/{}-icon", meta.name))?;
         }
 
         //================================================================
 
         let path = if self.file.is_empty() {
             format!(
-                "{}/{}_{}_{}.deb",
-                meta.path.display(),
+                "{}_{}_{}.deb",
                 format_name_label(&meta.name, &self.name),
                 meta.version,
                 self.architecture
             )
         } else {
-            format!(
-                "{}/{}.deb",
-                meta.path.display(),
-                format_file(&self.file, &meta)
-            )
+            format!("{}.deb", format_file(&self.file, &meta))
         };
 
         let mut command = std::process::Command::new("dpkg-deb");

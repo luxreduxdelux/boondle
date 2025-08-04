@@ -93,7 +93,7 @@ enum Layout {
 #[derive(Default, Serialize, Deserialize)]
 pub struct Script {
     name: String,
-    script: Option<String>,
+    script: String,
     layout: Vec<Layout>,
     enable: bool,
     #[serde(skip)]
@@ -116,7 +116,7 @@ impl Export for Script {
             ui.add_enabled_ui(self.enable, |ui| {
                 Project::entry_label(ui, &mut self.name, "Name");
 
-                App::pick_file(ui, "Script", &mut self.script);
+                Project::pick_file(ui, "Script", &mut self.script);
 
                 ui.separator();
 
@@ -286,12 +286,12 @@ impl Export for Script {
             ));
         }
 
-        if let Some(script) = &self.script {
-            let mut command = std::process::Command::new(script);
+        if !self.script.is_empty() {
+            let mut command = std::process::Command::new(&self.script);
 
             // TO-DO move into own function?
             command.env("BOONDLE_NAME", meta.name);
-            command.env("BOONDLE_ICON", meta.icon.unwrap_or_default());
+            command.env("BOONDLE_ICON", meta.icon);
             command.env("BOONDLE_INFO", meta.info);
             command.env("BOONDLE_FROM", meta.from);
             command.env("BOONDLE_VERSION", meta.version);

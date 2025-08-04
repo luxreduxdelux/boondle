@@ -64,9 +64,10 @@ use std::path::PathBuf;
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct Meta {
+    #[serde(skip)]
     pub path: PathBuf,
     pub name: String,
-    pub icon: Option<String>,
+    pub icon: String,
     pub info: String,
     pub from: String,
     pub version: String,
@@ -119,6 +120,8 @@ pub struct Project {
 impl Project {
     pub fn new() -> anyhow::Result<Option<Self>> {
         if let Some(path) = rfd::FileDialog::new().pick_folder() {
+            std::env::set_current_dir(&path)?;
+
             let result = Self {
                 meta: Meta {
                     path: path.clone(),
@@ -235,6 +238,18 @@ impl Project {
         });
     }
 
+    pub fn pick_file(ui: &mut egui::Ui, name: &str, path: &mut String) {
+        ui.horizontal(|ui| {
+            if ui.button(name).clicked()
+                && let Some(file) = rfd::FileDialog::new().pick_file()
+            {
+                *path = file.display().to_string();
+            }
+
+            Self::entry_label(ui, path, "Path");
+        });
+    }
+
     pub fn entry_label(ui: &mut egui::Ui, text: &mut String, label: &str) {
         ui.label(label);
         ui.text_edit_singleline(text);
@@ -261,13 +276,15 @@ impl Project {
     }
 
     pub fn load(mut path: PathBuf) -> anyhow::Result<Self> {
-        path.push("boondle.json");
+        std::env::set_current_dir(&path)?;
+
+        path.push("project.json");
 
         Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
     }
 
     fn save(&self, mut path: PathBuf) -> anyhow::Result<()> {
-        path.push("boondle.json");
+        path.push("project.json");
 
         Ok(std::fs::write(path, serde_json::to_string_pretty(self)?)?)
     }
@@ -284,7 +301,7 @@ impl Project {
             Self::entry_label(ui, &mut self.meta.category,     "Category");
             Self::entry_label(ui, &mut self.meta.key_word,     "Key-Word");
 
-            App::pick_file(ui, "Icon", &mut self.meta.icon);
+            Self::pick_file(ui, "Icon", &mut self.meta.icon);
 
             ui.checkbox(&mut self.meta.command_line, "Command-Line Application");
         });
